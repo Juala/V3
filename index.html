@@ -18,7 +18,9 @@
 
   /* HEADER */
   .chat-header {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 12px 18px;
     background: linear-gradient(135deg, #111831, #1c244a);
     border-bottom: 1px solid #2a2f4a;
@@ -59,6 +61,7 @@
 
   .time { font-size: 11px; opacity: 0.6; text-align: right; margin-top: 4px; }
 
+  /* COPY BUTTON */
   .copy-btn {
     position: absolute; bottom: 8px; right: 8px;
     background: #0078ff; color: white; border: none;
@@ -113,15 +116,20 @@
   }
   .history-item:hover { background: #1c244a; }
 
+  /* ANIMASI */
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  .typing { display: inline-flex; align-items: center; gap: 4px; }
+  /* TYPING DOTS */
+  .typing {
+    display: inline-flex; align-items: center; gap: 4px;
+  }
   .dot {
     width: 6px; height: 6px;
-    background-color: #fff; border-radius: 50%;
+    background-color: #fff;
+    border-radius: 50%;
     animation: blink 1.2s infinite;
   }
   .dot:nth-child(2) { animation-delay: 0.2s; }
@@ -151,12 +159,10 @@
 
   <div class="chat-input">
     <input id="userInput" type="text" placeholder="Ketik pesan..." />
-    <input id="fileInput" type="file" accept="image/*" style="display:none">
-    <button onclick="document.getElementById('fileInput').click()">📎</button>
     <button onclick="sendMessage()">Kirim</button>
   </div>
 
-  <div class="footer">copyright@RojaServer | V3</div>
+  <div class="footer">copyright@RojaServer | V2</div>
 
   <div class="history-modal" id="historyModal">
     <div class="history-header">
@@ -169,50 +175,59 @@
 <script>
   const chatBox = document.getElementById('chatBox');
   const input = document.getElementById('userInput');
-  const fileInput = document.getElementById('fileInput');
+  const GEMINI_API_KEY = "AIzaSyC310duBltZgbkMMfqRoAn6qVELo7x2slI"; 
+  const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
-  let selectedImage = null;
-
-  const API_URL = "/api/ai"; // backend Vercel
   let conversationHistory = [];
+  let allChats = JSON.parse(localStorage.getItem('roja_allChats') || "[]");
 
-  // Saat file dipilih
-  fileInput.addEventListener("change", e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      selectedImage = reader.result;
-      appendUser("[Gambar dilampirkan 📎]");
-    };
-    reader.readAsDataURL(file);
-  });
+  window.onload = function() {
+    const saved = localStorage.getItem('roja_chat');
+    const savedHistory = localStorage.getItem('roja_history');
+    if (saved) {
+      chatBox.innerHTML = saved;
+      conversationHistory = JSON.parse(savedHistory || "[]");
+    } else {
+      appendBot("Halo, aku Roja AI 🤖. Ada yang bisa aku bantu hari ini?");
+    }
+    chatBox.scrollTop = chatBox.scrollHeight;
+  };
 
   async function sendMessage() {
     const msg = input.value.trim();
-    if (!msg && !selectedImage) return;
+    if (!msg) return;
 
-    if (msg) appendUser(msg);
+    appendUser(msg);
     input.value = "";
 
     const typingDiv = appendTyping();
 
-    const body = { message: msg, imageBase64: selectedImage };
+    conversationHistory.push({ role: "user", content: msg });
 
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
+    try {
+      const prompt = conversationHistory.map(m => `${m.role}: ${m.content}`).join("\n");
+      const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
 
-    const data = await res.json();
-    typingDiv.remove();
+      const data = await res.json();
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Tidak ada respons dari AI.";
 
-    if (data.type === "image") appendImage(data.content);
-    else appendBot(formatMarkdown(data.content));
+      typingDiv.remove();
+      appendBot(formatMarkdown(reply));
 
-    selectedImage = null;
-    fileInput.value = "";
+      conversationHistory.push({ role: "model", content: reply });
+
+    } catch (err) {
+      console.error(err);
+      typingDiv.remove();
+      appendBot("❌ Gagal menghubungi API Gemini.");
+    }
+
+    saveChat();
+    chatBox.scrollTop = chatBox.scrollHeight;
   }
 
   function appendUser(text) {
@@ -220,22 +235,16 @@
     div.className = "message user";
     div.innerHTML = `${text}<div class='time'>${getTime()}</div>`;
     chatBox.appendChild(div);
+    saveChat();
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
   function appendBot(text) {
     const div = document.createElement("div");
     div.className = "message bot";
-    div.innerHTML = `<div class="markdown">${text}</div><div class='time'>${getTime()}</div>`;
+    div.innerHTML = `<div class="markdown">${text}</div><div class='time'>${getTime()}</div><button class="copy-btn" onclick="copyText(this)">Copy</button>`;
     chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
-
-  function appendImage(url) {
-    const div = document.createElement("div");
-    div.className = "message bot";
-    div.innerHTML = `<img src="${url}" style="max-width:220px;border-radius:10px;margin:5px 0;">`;
-    chatBox.appendChild(div);
+    saveChat();
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
@@ -255,21 +264,109 @@
     return now.getHours().toString().padStart(2, '0') + '.' + now.getMinutes().toString().padStart(2, '0');
   }
 
+  function saveChat() {
+    localStorage.setItem('roja_chat', chatBox.innerHTML);
+    localStorage.setItem('roja_history', JSON.stringify(conversationHistory));
+  }
+
+  function newChat() {
+    if (conversationHistory.length > 0) {
+      const title = generateTitle(conversationHistory);
+      allChats.push({ title, content: chatBox.innerHTML, history: conversationHistory, time: new Date().toLocaleString() });
+      localStorage.setItem('roja_allChats', JSON.stringify(allChats));
+    }
+    chatBox.innerHTML = "";
+    conversationHistory = [];
+    appendBot("Percakapan baru dimulai. Halo, aku Roja AI 🤖");
+    saveChat();
+    loadHistoryList();
+  }
+
+  function generateTitle(history) {
+    const firstUserMessage = history.find(m => m.role === "user");
+    if (!firstUserMessage) return "Percakapan Tanpa Judul";
+    const text = firstUserMessage.content;
+    return text.length > 30 ? text.substring(0, 30) + "..." : text;
+  }
+
   function toggleFullscreen() {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
     else document.exitFullscreen();
   }
 
-  function toggleHistory() {
-    document.getElementById('historyModal').classList.toggle('active');
+  function copyText(btn) {
+    const text = btn.parentElement.querySelector(".markdown").innerText;
+    navigator.clipboard.writeText(text);
+    btn.textContent = "✅ Disalin";
+    setTimeout(() => btn.textContent = "Copy", 2000);
   }
 
+  function toggleHistory() {
+    const modal = document.getElementById('historyModal');
+    modal.classList.toggle('active');
+    loadHistoryList();
+  }
+
+  function loadHistoryList() {
+    const list = document.getElementById('historyList');
+    list.innerHTML = "";
+    if (allChats.length === 0) {
+      list.innerHTML = "<p style='text-align:center;opacity:0.6;'>Belum ada riwayat.</p>";
+      return;
+    }
+    allChats.forEach((chat, index) => {
+      const item = document.createElement("div");
+      item.className = "history-item";
+      item.innerHTML = `<b>${chat.title}</b><br><small style='opacity:0.6;'>${chat.time}</small>`;
+      item.onclick = () => loadChat(index);
+      list.appendChild(item);
+    });
+  }
+
+  function loadChat(index) {
+    const selected = allChats[index];
+    chatBox.innerHTML = selected.content;
+    conversationHistory = selected.history;
+    saveChat();
+    toggleHistory();
+  }
+
+  input.addEventListener("keypress", e => { if (e.key === "Enter") sendMessage(); });
+
+  // Markdown ke HTML rapi
   function formatMarkdown(text) {
-    return text.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-               .replace(/\*(.*?)\*/g, "<i>$1</i>")
-               .replace(/\n/g, "<br>");
+    return text
+      .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+      .replace(/\*(.*?)\*/g, "<i>$1</i>")
+      .replace(/`(.*?)`/g, "<code>$1</code>")
+      .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+      .replace(/^## (.*$)/gim, "<h2>$1</h2>")
+      .replace(/^# (.*$)/gim, "<h1>$1</h1>")
+      .replace(/^- (.*$)/gim, "<li>$1</li>")
+      .replace(/\n/g, "<br>");
   }
 </script>
-</body>
+
+    <div style="margin-top:20px; text-align:center;">
+      <input type="file" id="imageUpload" accept="image/*" style="margin-top:10px;"/>
+      <div id="previewContainer" style="margin-top:15px;">
+        <img id="previewImage" src="" alt="Preview" style="max-width:90%; display:none; border-radius:10px;"/>
+      </div>
+    </div>
+    <script>
+      const imageInput = document.getElementById('imageUpload');
+      const previewImage = document.getElementById('previewImage');
+      imageInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = e => {
+            previewImage.src = e.target.result;
+            previewImage.style.display = 'block';
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    </script>
+    </body>
 </html>
-tujuannya
